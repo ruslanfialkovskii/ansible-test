@@ -1,0 +1,115 @@
+# This Ansible playbook performs server preparation tasks
+# Such as installing required packages, encrypting disks, and configuring the CPU.
+---
+- name: Get the kernel version
+  ansible.builtin.command: uname -r
+  register: kernel_version
+  changed_when: false
+
+- name: Update apt repositories
+  ansible.builtin.apt:
+    update_cache: yes
+
+- name: Install required packages
+  ansible.builtin.package:
+    name: "{{ item }}"
+    state: present
+  with_items:
+    - cryptsetup
+    - network-manager
+    - linux-tools-{{ kernel_version.stdout }}
+    
+- name: Check if the second disk is encrypted
+  block:
+  - name: Check if the second disk is encrypted
+    ansible.builtin.shell: "cryptsetup isLuks {{ second_disk }}"
+    register: second_disk_status
+    failed_when: false
+  rescue:
+    - name: Handle the error
+      ansible.builtin.debug:
+        msg: "The second disk is not encrypted"
+      ignore_errors: true
+
+- name: Generate a random key file for the second disk
+  ansible.builtin.shell: "dd if=/dev/urandom of=/home/{{ ansible_user }}/key_file1 bs=1024 count=1"
+  when: second_disk is defined and second_disk_status.rc != 0
+  ignore_errors: true
+
+- name: Encrypt the second disk
+  ansible.builtin.command: "cryptsetup --batch-mode luksFormat {{ second_disk }} --key-file /home/{{ ansible_user }}/key_file1"
+  when: second_disk is defined and second_disk_status.rc != 0
+  ignore_errors: true
+
+- name: Check if the first disk's second partition is encrypted
+  block:
+  - name: Check if the first disk's second partition is encrypted
+    ansible.builtin.shell: "cryptsetup isLuks {{ first_disk_second_partition }}"
+    register: first_disk_second_partition_status
+    failed_when: false
+  rescue:
+    - name: Handle the error
+      ansible.builtin.debug:
+        msg: "The first disk's second partition is not encrypted"
+      ignore_errors: true
+
+- name: Generate a random key file for the first disk's second partition
+  ansible.builtin.shell: "dd if=/dev/urandom of=/home/{{ ansible_user }}/key_file2 bs=1024 count=1"
+  when: first_disk_second_partition is defined and first_disk_second_partition_status.rc != 0
+  ignore_errors: true
+
+- name: Encrypt the first disk's second partition
+  ansible.builtin.command: "cryptsetup --batch-mode luksFormat {{ first_disk_second_partition }} --key-file /home/{{ ansible_user }}/key_file2"
+  when: first_disk_second_partition is defined and first_disk_second_partition_status.rc != 0
+  ignore_errors: true
+
+- name: Get the number of CPUs
+  ansible.builtin.shell: nproc
+  register: nproc
+  changed_when: false
+
+- name: Disable C-states for all CPUs
+  ansible.builtin.shell: echo 1 > /sys/devices/system/cpu/cpu{{ item }}/cpuidle/state{{ cstate }}/disable
+  with_sequence: start=0 end={{ nproc.stdout|int - 1 }}
+  vars:
+    cstate: 1
+  become_user: root
+
+- name: Check if cpufreq module is loaded
+  block:
+    - ansible.builtin.shell: lsmod | grep cpufreq
+      register: cpufreq_module
+      changed_when: false
+  rescue:
+    - name: Handle the error
+      ansible.builtin.debug:
+        msg: "Failed to check if cpufreq module is loaded"
+      ignore_errors: true
+      failed_when: false
+
+- name: Switch CPU to performance mode
+  ansible.builtin.shell: cpupower frequency-set --governor performance
+  ignore_errors: true
+  become_user: root
+  when: cpufreq_module.rc == 0
+
+- name: Rename network interface to net0
+  community.general.nmcli:
+    type: ethernet
+    conn_name: net0
+    ifname: "{{ ansible_default_ipv4.interface }}"
+    state: present
+  register: net_info
+
+- name: Display network interface info
+  ansible.builtin.debug:
+    msg: "{{ net_info }}"
+
+- name: Display CPU list and Hyper-Threading information
+  ansible.builtin.shell: |
+    lscpu
+  register: cpu_info
+
+- name: Show CPU info
+  ansible.builtin.debug:
+    var: cpu_info.stdout
