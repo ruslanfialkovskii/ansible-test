@@ -24,12 +24,13 @@
   - name: Check if the second disk is encrypted
     ansible.builtin.shell: "cryptsetup isLuks {{ second_disk }}"
     register: second_disk_status
-    failed_when: false
   rescue:
     - name: Handle the error
       ansible.builtin.debug:
         msg: "The second disk is not encrypted"
       ignore_errors: true
+      failed_when: false
+
 
 - name: Generate a random key file for the second disk
   ansible.builtin.shell: "dd if=/dev/urandom of=/home/{{ ansible_user }}/key_file1 bs=1024 count=1"
@@ -46,12 +47,13 @@
   - name: Check if the first disk's second partition is encrypted
     ansible.builtin.shell: "cryptsetup isLuks {{ first_disk_second_partition }}"
     register: first_disk_second_partition_status
-    failed_when: false
   rescue:
     - name: Handle the error
       ansible.builtin.debug:
         msg: "The first disk's second partition is not encrypted"
       ignore_errors: true
+      failed_when: false
+
 
 - name: Generate a random key file for the first disk's second partition
   ansible.builtin.shell: "dd if=/dev/urandom of=/home/{{ ansible_user }}/key_file2 bs=1024 count=1"
